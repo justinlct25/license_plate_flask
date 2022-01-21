@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document</title>
+    <style>
+        body {
+            background-color: black;
+        }
+        
+        #detect-container {
+            display: flex;
+            justify-content: space-around;
+        }
+        
+        #title {
+            width: 100%;
+            color: white;
+            font-size: 40px;
+            text-align: center;
+        }
+        
+        #video-container {
+            padding: 5px;
+            width: 100%;
+            text-align: center;
+        }
+        
+        video {
+            height: 70vh;
+            width: max-content;
+        }
+        
+        #result-container {
+            padding: 5px;
+            width: 50%;
+            height: 70vh;
+            text-align: center;
+            vertical-align: center;
+            justify-content: space-around;
+            opacity: 0.8;
+            align-items: center;
+        }
+        
+        #img-container {
+            height: 50%;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        #image_plate {
+            width: 100%;
+            text-align: center;
+        }
+        
+        #result {
+            height: 100px;
+            color: white;
+            font-size: 30px;
+            text-align: center;
+            align-items: center;
+            line-height: 100px;
+        }
+        
+        .detecting {
+            background: rgba(255, 0, 0, 0.5);
+        }
+        
+        .detected {
+            background: rgba(0, 255, 0, 0.5);
+        }
+        
+        #plate {
+            color: white;
+            font-size: 35px;
+        }
+        
+        @media only screen and (max-width: 1300px) {
+            video {
+                width: 100vw;
+                height: max-content;
+            }
+            #detect-container {
+                display: block;
+            }
+            #result-container {
+                display: flex;
+                flex-direction: row;
+                justify-content: center;
+                padding: 5px;
+                width: 80vw;
+                height: 15vh;
+                text-align: center;
+                vertical-align: center;
+                align-items: center;
+                opacity: 0.8;
+                margin-left: 10vw;
+            }
+            #img-container {
+                width: 50%;
+                justify-content: center;
+            }
+            #image_plate {
+                height: 100%;
+                text-align: center;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div id="title">License Plate Detector</div>
+    <div id="detect-container">
+        <div id="video-container">
+            <video id="video" autoplay></video>
+        </div>
+        <div id="result-container" class="detecting">
+            <div id="result">Detecting...</div>
+            <div id="img-container">
+                <img id="image_plate" src="{{url_for('static', filename='muselabs.png')}}" />
+            </div>
+            <div id="plate"></div>
+        </div>
+    </div>
+    <script src="https://cdn.socket.io/socket.io-1.0.0.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js" integrity="sha512-q/dWJ3kcmjBLU4Qc47E4A9kTB4m3wuTY7vkFJDTZKjTs8jhyGQnaUrxa0Ytd0ssMZhbNua9hE+E7Qv1j+DyZwA==" crossorigin="anonymous"></script>
+    <script>
+        function getDataURL(canvas, video) {
+            canvas.getContext("2d").drawImage(video, 0, 0);
+            const dataURL = canvas.toDataURL()
+            return dataURL
+        }
+
+        function processFrameLoop(canvas, video) {
+            console.log('processframe')
+            setInterval(function() {
+                console.log('interval')
+                canvas.getContext("2d").drawImage(video, 0, 0);
+                let dataURL = canvas.toDataURL()
+                socket.emit('message', {
+                    data: dataURL
+                });
+            }, 1000)
+        }
+
+        const video = document.getElementById('video');
+
+        var socket = io.connect('http://127.0.0.1:5000')
+        socket.on('connect', function() {
+            socket.emit('message', {
+                data: 'I\'m connected!'
+            });
+        });
+        if (navigator.mediaDevices.getUserMedia === undefined) {
+            navigator.mediaDevices.getUserMedia = function(constraints) {
+                var getUserMedia = navigator.webkitGetUserMedia || navigator.mozGetUserMedia;
+
+                if (!getUserMedia) {
+                    return Promise.reject(new Error('getUserMedia is not implemented in this browser'));
+                }
+                return new Promise(function(resolve, reject) {
+                    getUserMedia.call(navigator, constraints, resolve, reject);
+                });
+            }
+        }
+        video.setAttribute('autoplay', '');
+        video.setAttribute('muted', '');
+        video.setAttribute('playsinline', '');
+        let data_blob = ''
+
+        navigator.mediaDevices.getUserMedia({
+                audio: false,
+                video: {
+                    facingMode: 'environment'
+                }
+            })
+            .then(function(stream) {
+                if ("srcObject" in video) {
+                    video.srcObject = stream;
+                } else {
+                    video.src = window.URL.createObjectURL(stream);
+                }
+                video.onloadedmetadata = function(e) {
+                    video.play();
+                    const FPS = 30
+                    async function detectPlate() {
+                        let begin = Date.now()
+                        const canvas = document.createElement("canvas");
+                        canvas.width = video.videoWidth;
+                        canvas.height = video.videoHeight;
+                        canvas.getContext("2d").drawImage(video, 0, 0);
+
+                        const res = await fetch("http://127.0.0.1:5000/detect", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                            },
+                            body: JSON.stringify({
+                                data: canvas.toDataURL()
+                            }),
+                        });
+                        if (res.status === 200) {
+                            const response = await res.json()
+                            console.log(response)
+                            let isDetected = response.detected
+                            let detectDOM = document.getElementById("result")
+                            let plateDOM = document.getElementById("plate")
+                            if (isDetected & response.text.length != 0) {
+                                detectDOM.innerHTML = 'Plate Detected'
+                                plateDOM.innerHTML = ''
+                                for (let i = 0; i < response.text.length; i++) {
+                                    plateDOM.innerHTML += response.text[i]
+                                }
+                                let img_base64 = "data:image/png;base64," + response["img_base64"];
+                                document.getElementById("image_plate").src = img_base64;
+                                document.getElementById("result-container").classList.value = ''
+                                document.getElementById("result-container").classList.add("detected")
+                            } else {
+                                detectDOM.innerHTML = 'Detecting...'
+                                plateDOM.innerHTML = ''
+                                document.getElementById("image_plate").src = "{{url_for('static', filename='muselabs.png')}}";
+                                document.getElementById("result-container").classList.value = ''
+                                document.getElementById("result-container").classList.add("detecting")
+                            }
+                        }
+                        let delay = 1000 / FPS - (Date.now() - begin)
+                        setTimeout(detectPlate, delay)
+                    }
+                    detectPlate()
+                };
+            })
+            .catch(function(err) {
+                console.log(err.name + ": " + err.message);
+            });
+    </script>
+</body>
+
+</html>
